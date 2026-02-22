@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs | CCW社区的 Arkos | 所有前作者 / ...
 // License: 继承 | 未定义？（源码并没有写什么协议） | 比 MIT 更宽松的协议（前者都不满足的默认情况） / ...
 // Scratch-compatible: false
-// Extended version: v0.3.5
+// Extended version: v0.4.5
 
 /* 事先声明：
  *
@@ -12,6 +12,26 @@
  * 该扩展参考自CCW社区的 Arkos 的“局部变量”扩展源码
  * CCW社区的 Arkos 的“局部变量”扩展源码的来源是 CCW社区 的 素材集市 的 扩展 分区中可查找到的（至少截止到获取源码时日期） 公开的扩展源码 
  * 本人并没有用非法手段获取
+ * 
+ * 看到源码有一些开发者信息，于是就直接摘录了
+ * collaboratorList: [
+       {
+           collaborator: 'SimonShiki @ ClipCC',
+           collaboratorURL: 'https://github.com/SimonShiki',
+       },
+       {
+           collaborator: 'Skyhigh173',
+           collaboratorURL: 'https://github.com/Skyhigh173',
+       },
+       {
+           collaborator: 'Arkos(搬运者) @ CCW',
+           collaboratorURL: 'https://www.ccw.site/student/6107c5323e593a0c25f850f8',
+       },
+       {
+           collaborator: 'Wxxbjs(参考)',
+           collaboratorURL: 'https://github.com/Wxxbjs',
+       },
+   ]
  * 
  * 扩展本身的声明：
  * 该扩展只考虑到TurboWarp编辑器环境
@@ -68,6 +88,9 @@
      修复解释模式下自制积木越过积木段访问局部变量的问题（这玩意怎么一直没发现。从v0.0.0遗留到现在。）
  * - v0.3.5：
      没什么功能改动，主要调整注释和注释一些不必要的console.log()，简化代码
+ * - v0.4.5：
+     更新准备已久的内置局部变量的循环积木！
+     而且之前留的接口非常好，写起来一点都不坐牢，非常顺利
 */
 
 /* 设计Tips：
@@ -161,6 +184,7 @@
     const runtime=vm.runtime;
 
     const localVariable=Symbol("localVariable");//非编译模式时，上下文信息的唯一属性名
+    const localVariable_loopInit=Symbol("localVariable_loopInit");//非编译模式时，循环积木的唯一属性
 
     const ExtensionsName="LocalVariableExtensions";
     function toString(value){return Cast.toString(value)};
@@ -216,12 +240,12 @@
     }
 
     //获取局部变量存放的对象，如果没有就创建新的
-    function getLocalVariableObj(variable,thread){
+    function getLocalVariableObj(variable,thread,idx=2){
         //获取线程的栈帧
         const stackFrames=getStackFrames(thread);
         // console.log(deepCopy(stackFrames));
         //遍历栈帧,因为栈顶是当前积木，所以应该从第倒数二个开始搜索
-        for(let i=stackFrames.length-2;i>=0;--i){
+        for(let i=stackFrames.length-idx;i>=0;--i){
             //单帧
             const stackFrame=stackFrames[i];
             //上下文
@@ -247,11 +271,11 @@
 
     //创建新的作用域存放对象，同时返回存储对象
     //此函数有一个特殊的参数pd，表示是否是真追加（即真新建），默认pd为false，即只要有作用域对象就用，不强新建
-    function createLocalVariableObj(thread,pd=false){
+    function createLocalVariableObj(thread,pd=false,idx=2){
         //获取线程的栈帧
         const stackFrames=getStackFrames(thread);
         //获取单个栈帧
-        const stackFrame=stackFrames.at(-2);
+        const stackFrame=stackFrames.at(-idx);
         //上下文对象
         if(!stackFrame.executionContext||typeof stackFrame.executionContext!=="object")stackFrame.executionContext={};
         //指向上下文
@@ -342,6 +366,21 @@
                             }
                         }
                     },
+                    {
+                        opcode:"range",
+                        blockType:Scratch.BlockType.LOOP,
+                        text:["重复执行 [num] 次，以 [variable] 为计数器"],
+                        arguments:{
+                            num:{
+                                type:Scratch.ArgumentType.NUMBER,
+                                defaultValue:10
+                            },
+                            variable:{
+                                type:Scratch.ArgumentType.STRING,
+                                defaultValue:"i"
+                            }
+                        }
+                    },
                     "---",
                     {
                         opcode:"debugLog",
@@ -419,6 +458,16 @@
                         value:this.descendInputOfBlock(block,"value")
                     };
                 }
+                if(block.opcode===`${ExtensionsName}_range`){
+                    const variable=this.descendInputOfBlock(block,"variable");
+                    if(variable.opcode!=="constant")this.script[ASTGeneratorStub_dynamic]=true;
+                    return{
+                        kind:`${ExtensionsName}.range`,
+                        num:this.descendInputOfBlock(block,"num"),
+                        variable:variable,
+                        substack:this.descendSubstack(block,"SUBSTACK")
+                    };
+                }
                 //其他积木交给原函数处理
                 return originalDescendStackedBlock.call(this,block);
             };
@@ -485,10 +534,10 @@
 
             //尝试创建新的局部域（父栈帧数组末尾），返回{scopeName:作用域名称,pd:是否新建成功}
             //同样的，还有一个pd参数用来强新建，与解释模式类似
-            function JSGeneratorStub_createLocalDomainUniqueName(obj,pd=false){
+            function JSGeneratorStub_createLocalDomainUniqueName(obj,pd=false,idx=2){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
                 //绝对先从父栈帧开始考虑
-                const frame=stackframes[stackframes.length-2];
+                const frame=stackframes[stackframes.length-idx];
                 //新建标记
                 let createDetectionPD=false;
                 //数组
@@ -528,10 +577,10 @@
 
             //查找整个栈帧是否出现了name的变量，如果没有出现，返回false的同时，顺便存储变量
             //op表示是否是纯粹查询，即不创建新的变量，默认不纯粹
-            function JSGeneratorStub_CheckIfItExists(name,obj,op=false){
+            function JSGeneratorStub_CheckIfItExists(name,obj,op=false,idx=2){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
                 //标准查询
-                for(let i=stackframes.length-2;i>=0;--i){
+                for(let i=stackframes.length-idx;i>=0;--i){
                     const frame=stackframes[i];
                     if(frame[JSGeneratorStub_Object]){
                         const scopes=frame[JSGeneratorStub_Object];
@@ -546,10 +595,12 @@
 
             //返回当前父栈帧有没有存放变量，如果返回false，则顺便创建当前父栈帧存放变量
             //pd参数同理
-            function JSGeneratorStub_CreateVariable(name,obj,pd=false){
+            //op参数表示是否忽略name，直接创建。
+            //一般只和pd为true的时候用
+            function JSGeneratorStub_CreateVariable(name,obj,pd=false,idx=2,op=false){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
                 //绝对先从父栈帧开始考虑
-                const frame=stackframes[stackframes.length-2];
+                const frame=stackframes[stackframes.length-idx];
                 //新建标记
                 let createDetectionPD=true;
                 //数组
@@ -557,11 +608,11 @@
                 //数组指向
                 const scopes=frame[JSGeneratorStub_Object];
                 //创建逻辑
-                if(pd||scopes.length===0)scopes.push(new Scope(JSGeneratorStub_getUniqueName(obj),new Set()));
+                if(pd||scopes.length===0)scopes.push(new Scope(JSGeneratorStub_getUniqueName(obj),new Set())),createDetectionPD=false;
                 //单个作用域
                 const scope=scopes.at(-1);
                 //变量名存储新建
-                if(!scope.variables.has(name)){
+                if(!op&&!scope.variables.has(name)){
                     scope.variables.add(name);
                     createDetectionPD=false;
                 }
@@ -713,6 +764,7 @@
                     }
                     return;
                 }
+                //增加局部变量
                 if(node.kind===`${ExtensionsName}.addVariable`){
                 
                     //获取variable和value的js表达式
@@ -745,6 +797,58 @@
                         if(pd)this.source+=`(+${variableName}||0)+`;
                         this.source+=`(+${value}||0)\n`;
                         //与设置基本一样。特殊处理let就行。
+                    }
+                    return;
+                }
+                //for循环
+                if(node.kind===`${ExtensionsName}.range`){
+                
+                    //获取num和variable的js表达式
+                    const num=this.descendInput(node.num).asUnknown();
+                    const variable=this.descendInput(node.variable).asUnknown();
+
+                    //动态模式
+                    if(this.script[ASTGeneratorStub_dynamic]){
+                        //这里直接创建两个局部域在 自己 身上
+                        const obj1=JSGeneratorStub_createLocalDomainUniqueName(this,true,1);
+                        const obj2=JSGeneratorStub_createLocalDomainUniqueName(this,true,1);
+                        //不用想，肯定最底下的局部域一定要找一个父作用域，第二个只需要连接第一个即可
+                        //而且将最底下的作用域直接设置一个值去使用for的语法就行了
+                        const scopeName1=obj1.scopeName;
+                        const scopeName2=obj2.scopeName;
+                        // this.source+=`console.log("断点");\n`;
+                        this.source+=`const ${scopeName1}=Object.create(${JSGeneratorStub_getLocalDomainFirstprototype(this,2,1)});\n`;
+                        this.source+=`const ${scopeName2}=Object.create(${scopeName1});\n`;
+                        this.source+=`const ${scopeName1}_variable=${variable};\n`;
+                        this.source+=`for(let i=1,I=${num};i<=I;++i){\n`;
+                        this.source+=`${scopeName1}[${scopeName1}_variable]=i;\n`;
+                        this.descendStack(node.substack,{
+                            isLoop:true,
+                            isLastBlock:false,
+                        });
+                        this.source+='}\n';
+                    }
+                    //静态模式
+                    else{
+                        // console.log(deepCopy([this,this.frames]));
+                        //同样的，直接创建两个局部域对象
+                        //pd其实可以不用管了，毕竟绝对是新建的
+                        const encode_variable=JSGeneratorStub_encode(variable);
+                        //第一个作用域关心当前的变量名，固不能忽略name且不能乱填name
+                        const obj1=JSGeneratorStub_CreateVariable(encode_variable,this,true,1,false);
+                        const obj2=JSGeneratorStub_CreateVariable(null,this,true,1,true);
+                        const scopeName1=obj1.scopeName;
+                        const scopeName2=obj2.scopeName;//其实不用提取。因为第二个就是纯独立于第一个作用域而创建的。
+                        const variableName=`${scopeName1}_${encode_variable}`;
+                        // this.source+=`console.log("断点");\n`;
+                        //根据定义，不可由变量自己影响循环的次数
+                        this.source+=`for(let i=1,I=${num};i<=I;++i){\n`;
+                        this.source+=`let ${variableName}=i;\n`;
+                        this.descendStack(node.substack,{
+                            isLoop:true,
+                            isLastBlock:false,
+                        });
+                        this.source+='}\n';
                     }
                     return;
                 }
@@ -822,6 +926,24 @@
             //尝试获取局部变量处在的局部域
             const obj=getLocalVariableObj(variable,util.thread);
             return variable in obj?obj[variable]:"";
+        }
+        range(args,util){
+            let obj=util.stackFrame[localVariable_loopInit];
+            // util.stackFrame 返回的时当前栈帧的直接上下文
+            if(!obj){
+                const num=toNumber(args.num);
+                const variable=toString(args.variable);
+                obj=util.stackFrame[localVariable_loopInit]={
+                    END:num,
+                    cur:1,
+                    variable:variable
+                }
+                //创建两个作用域，第一个用来存放循环的变量
+                createLocalVariableObj(util.thread,true,1)[variable]=obj.cur;
+                createLocalVariableObj(util.thread,true,1);
+            }
+            else getLocalVariableObj(obj.variable,util.thread,1)[obj.variable]=++obj.cur;
+            if(obj.cur<=obj.END)util.startBranch(1,true);
         }
         debugLog(args,util){
             const str=toString(args.str);
