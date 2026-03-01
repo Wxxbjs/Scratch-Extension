@@ -4,13 +4,15 @@
 // By: 无心小白僵尸 / Wxxbjs
 // License: 比 MIT 更宽松的协议 / A more permissive license than MIT
 // Scratch-compatible: true
-// Extended version: v0.0.1
+// Extended version: v0.0.2
 
 /* 更新 Tips:
  * - v0.0.0：
      完成大部分有用的积木与组合
  * - v0.0.1：
      新增矩阵积木的更多承载方式
+ * - v0.0.2：
+     修复构成幂运算的积木中的阴影块缺失的问题
 */
 
 (function (Scratch) {
@@ -409,6 +411,7 @@
                                                 <field name="OPERATOR">ln</field>
                                                 <value name="NUM"><shadow type="math_number"><field name="NUM">2</field></shadow></value>
                                             </block>
+                                            <shadow type="math_number"><field name="NUM"></field></shadow>
                                         </value>
                                         <value name="NUM2"><shadow type="math_number"><field name="NUM">0.5</field></shadow></value>
                                     </block>

@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs
 // License: 比 MIT 更宽松的协议 / A more permissive license than MIT
 // Scratch-compatible: false
-// Extended version: v0.5.9
+// Extended version: v0.6.11
 
 /* 更新 Tips:
  * - 基本实现了渲染需求，接下来就是处理细节和优化逻辑
@@ -52,7 +52,20 @@
      - 而相机参数 RFC 系列（R 架到 F 父 C 相机 ，字面意思。），即 RFCx,RFCy,RFCd,RFCs 可以想象相机外维的变换
        或者把相机也想象成为一个“角色”，而这个“角色”也有自己处在的世界的 x,y,d,s ，也可以带入到父相机的变换里
      这样相机也可以抽象成“角色”带入到父相机的变换了，很大程度上减少了认知负担
+ * - v0.6.11：
+     移除开关启优化的强行渲染所有角色这个副作用
+     新增开关启渲染冻结积木
+     该积木的主要作用就是纯修改有关相机的属性和数据，但完全不进行实际的渲染操作，即冻结渲染
+     如果利用的好，可以有效提升性能，且不再需要额外编码进行数据的转移
+     修复一些损耗性能的bug
 
+     至于怎么利用好 优化 和 冻结 ，这是我期望的策略（设计这些开关项的目的就是这个）：
+     - 用最高执行顺序线程来初始化当前渲染帧，关闭优化，开启冻结
+     - 而后直接核心的计算（注意由于开启了冻结，所以修改渲染属性不会生效，但是对于“用户基于渲染反馈，所以计算也绝对基于原始渲染”的开发策略，冻结的不生效性质可能还会意外的有点帮助）
+     - 最后，用最低执行顺序线程开启优化，关闭冻结
+     这样性能是最高的
+     除非你需要某些动态篡改渲染来完成计算的需求
+     那么你需要考虑其他的策略
 */
 
 (function(Scratch){
@@ -124,7 +137,10 @@
         isUnchanged(){return this.current===this.lastTime;}
     }
 
+    //渲染优化标记，默认不优化
     const isOptimization=new Status();
+    //渲染冻结标记，默认不冻结
+    const isFreeze=new Status();
 
     class Dot{
         constructor(x=0,y=0,d=90,s=100){
@@ -132,13 +148,14 @@
         }
     }
 
+    //坐标变换函数
     function coordinateTransformation(dot,origin){
         const newDot=new Dot();
         const invSin=sin(origin.d);
         const invCos=cos(origin.d);
         const invSize=origin.s/100;
-        newDot.x=(dot.x*invSin-dot.y*invCos)*invSize+origin.x;
-        newDot.y=(dot.x*invCos+dot.y*invSin)*invSize+origin.y;
+        newDot.x=origin.x+(dot.x*invSin-dot.y*invCos)*invSize;
+        newDot.y=origin.y+(dot.x*invCos+dot.y*invSin)*invSize;
         newDot.d=dot.d+(origin.d-90);
         newDot.s=dot.s*invSize;
         return newDot;
@@ -554,6 +571,10 @@
     //坐标
     const ogUpdatePosition=renderer.exports.Drawable.prototype.updatePosition;
     renderer.exports.Drawable.prototype.updatePosition=function(position){
+        //冻结功能
+        //如果是冻结，则直接退出
+        if(isFreeze.getCurrent())return;
+
         const target=getTargetThroughDrawableID(this._id);
         const dot=CameraRenderer(target,new Dot(position[0],position[1]));
         position[0]=dot.x;
@@ -568,6 +589,10 @@
     //方向
     const ogUpdateDirection=renderer.exports.Drawable.prototype.updateDirection;
     renderer.exports.Drawable.prototype.updateDirection=function(direction){
+        //冻结功能
+        //如果是冻结，则直接退出
+        if(isFreeze.getCurrent())return;
+
         const target=getTargetThroughDrawableID(this._id);
         const dot=CameraRenderer(target,new Dot(0,0,direction));
         direction=dot.d;
@@ -578,6 +603,10 @@
     //大小
     const ogUpdateScale=renderer.exports.Drawable.prototype.updateScale;
     renderer.exports.Drawable.prototype.updateScale=function(scale){
+        //冻结功能
+        //如果是冻结，则直接退出
+        if(isFreeze.getCurrent())return;
+
         const target=getTargetThroughDrawableID(this._id);
         const dot=CameraRenderer(target,new Dot(0,0,90,1));
         const sum=scale.reduce((acc,it,idx)=>acc+=scale[idx]=it*dot.s,0);
@@ -588,6 +617,10 @@
     //外观积木的对话框
     const ogPositionBubble=runtime.ext_scratch3_looks._positionBubble;
     runtime.ext_scratch3_looks._positionBubble=function(target){
+        //冻结功能
+        //如果是冻结，则直接退出
+        if(isFreeze.getCurrent())return;
+
         const ogNativeSize=renderer._nativeSize;
         renderer._nativeSize=[Infinity,Infinity];
         ogPositionBubble.call(this,target);
@@ -596,6 +629,10 @@
 
     //渲染角色
     function rendnererTarget(target){
+        //冻结功能
+        //如果是冻结，则直接退出
+        if(isFreeze.getCurrent())return;
+
         const drawable=renderer._allDrawables[target.drawableID];
         drawable.updatePosition([target.x,target.y]);
         drawable.updateDirection(target.direction);
@@ -621,30 +658,25 @@
                 color2:"#3460e3",
                 color3:"#2851c9",
                 blocks:[
-                    {
-                        blockType:Scratch.BlockType.LABEL,
-                        text:"Tips：",
-                    },
-                    {
-                        blockType:Scratch.BlockType.LABEL,
-                        text:"该功能目前还在测试",
-                    },
-                    {
-                        blockType:Scratch.BlockType.LABEL,
-                        text:"额外的计算在部分情况下",
-                    },
-                    {
-                        blockType:Scratch.BlockType.LABEL,
-                        text:"可能导致逆优化",
-                    },
-                    {
-                        blockType:Scratch.BlockType.LABEL,
-                        text:"请尝试对比实际性能损耗再做决定",
-                    },
+                    // {
+                    //     blockType:Scratch.BlockType.LABEL,
+                    //     text:"Tips：",
+                    // },
                     {
                         opcode:"switchOptimization",
                         blockType:Scratch.BlockType.COMMAND,
                         text:"[OFForON] 相机渲染优化？",
+                        arguments:{
+                            OFForON:{
+                                type:Scratch.ArgumentType.STRING,
+                                menu:"OFForON"
+                            },
+                        }
+                    },
+                    {
+                        opcode:"switchSynchronize",
+                        blockType:Scratch.BlockType.COMMAND,
+                        text:"[OFForON] 相机渲染冻结？",
                         arguments:{
                             OFForON:{
                                 type:Scratch.ArgumentType.STRING,
@@ -839,19 +871,33 @@
                 CameraTree.dfs_parentNode_computeDirectTransformation();
             }
             //状态是下降趋势？
-            if(isOptimization.isDownward()){
-                
+            else if(isOptimization.isDownward()){
+
             }
+            //现决定在正式发行版将注释这些代码，以便提升性能
             //为了对比是否正确，强行重新计算所有角色的渲染坐标
-            const targets=CameraTree.getTargets();
-            console.log(targets);
-            targets.forEach(it=>rendnererTarget(it));
+            // const targets=CameraTree.getTargets();
+            // console.log(targets);
+            // targets.forEach(it=>rendnererTarget(it));
+        }
+        switchSynchronize(args,util){
+            const OFForON=toString(args.OFForON)==="true";
+            
+            isFreeze.set(OFForON);
+            //冻结功能
+            //如果冻结状态是成下降趋势，根据定义，应该直接全局渲染一次
+            //注意了
+            //如果你是用拦截渲染方法并直接全局终止，实现类似冻结的功能
+            //那么解除冻结时遍历的一定所有的targets，而不是部分target
+            if(isFreeze.isDownward())runtime.targets.forEach(it=>rendnererTarget(it));
         }
         clearCamera(args,util){
             
             CameraTree.clear();
 
-            CameraTree.getTargets().forEach(it=>rendnererTarget(it));
+            //冻结功能
+            //如果不是冻结，进行渲染
+            if(!isFreeze.getCurrent())CameraTree.getTargets().forEach(it=>rendnererTarget(it));
         }
         bindCamera(args,util){
             const CameraA=toString(args.CameraA);
@@ -865,13 +911,17 @@
                 CameraTree.dfs_childNode_computeDirectTransformation(CameraA);
             }
 
-            CameraTree.getTargets(CameraA).forEach(it=>rendnererTarget(it));
+            //冻结功能
+            //如果是冻结，只进行脏标记；否则进行渲染
+            if(!isFreeze.getCurrent())CameraTree.getTargets(CameraA).forEach(it=>rendnererTarget(it));
         }
         deleteCamera(args,util){
             const CameraA=toString(args.CameraA);
 
             if(CameraTree.has(CameraA)){
-                const targets=CameraTree.getTargets(CameraA);
+                //冻结功能
+                //如果是冻结，直接返回空数组；否则就正常获取绑定的角色
+                const targets=isFreeze.getCurrent()?[]:CameraTree.getTargets(CameraA);
 
                 //优化功能
                 const childNode=CameraTree.tree[CameraA].childNode;
@@ -884,7 +934,9 @@
                     for(const it of childNode)CameraTree.dfs_childNode_computeDirectTransformation(it);
                 }
 
-                targets.forEach(it=>rendnererTarget(it));
+                //冻结功能
+                //如果是冻结，只进行脏标记；否则进行渲染
+                if(!isFreeze.getCurrent())targets.forEach(it=>rendnererTarget(it));
             }
         }
         editCamera(args,util){
@@ -904,7 +956,9 @@
                 CameraTree.dfs_childNode_computeDirectTransformation(CameraA);
             }
 
-            CameraTree.getTargets(CameraA).forEach(it=>rendnererTarget(it));
+            //冻结功能
+            //如果是冻结，只进行脏标记；否则进行渲染
+            if(!isFreeze.getCurrent())CameraTree.getTargets(CameraA).forEach(it=>rendnererTarget(it));
         }
         hasCamera(args,util){
             const CameraA=toString(args.CameraA);
@@ -938,8 +992,9 @@
             CameraTree.bindData(CameraA,target);
             setSpriteData(target,AssociatedCamera,CameraA);
 
-            //渲染
-            rendnererTarget(target);
+            //冻结功能
+            //如果是冻结，只进行脏标记；否则进行渲染
+            if(!isFreeze.getCurrent())rendnererTarget(target);
         }
         getSpriteCamera(args,util){
 
