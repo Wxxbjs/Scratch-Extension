@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs | CCW社区的 Arkos | 所有前作者 / ...
 // License: 继承 | 未定义？（源码并没有写什么协议） | 比 MIT 更宽松的协议（前者都不满足的默认情况） / ...
 // Scratch-compatible: false
-// Extended version: v0.4.5
+// Extended version: v0.4.7
 
 /* 事先声明：
  *
@@ -91,6 +91,10 @@
  * - v0.4.5：
      更新准备已久的内置局部变量的循环积木！
      而且之前留的接口非常好，写起来一点都不坐牢，非常顺利
+ * - v0.4.7：
+     修复因篡改后注入的代码不是永恒最高的导致的bug
+     修复扩展的循环积木没有的隐式帧让步功能bug
+     优化部分逻辑
 */
 
 /* 设计Tips：
@@ -205,11 +209,11 @@
     //栈帧存储的作用域的行为：
     // stackFrame[symbol(key)]=array<scope>
 
-    //注意了， 尽可能 使用会随 积木 一同出现一同消失的东西
+    //注意了，尽可能选择 会随积木一同出现一同消失 的东西
     //比如解释模式下的栈帧的上下文属性，而一定不能用栈帧对象
     //因为scr有点聪明但不多，会重置每一个独立的积木的上下文属性，但是栈帧会复用
     //如果没有随积木的东西，就 尽可能 篡改栈帧的加入和行为
-    //如果是在不行，就强捕获每一个积木作为栈顶的行为，然后不管怎样删除作用域对象即可
+    //如果是在不行，就强捕获每一个积木作为栈顶的行为，然后不管怎样删除作用域对象即可（要注意篡改后新增代码的优先级是否一定是最高的）
     //如果仍然不行，考虑自己维护（栈帧和作用域分离，这个设计我考虑过，但是有点麻烦且现有方法能解决上述问题我就没用了。）
     //如果还不行，那就别写了，这个诡异的生态不适合你为此付出时间和精力。
 
@@ -392,6 +396,12 @@
                                 defaultValue:""
                             }
                         }
+                    },
+                    {
+                        opcode:"compilerdebug",
+                        blockType:Scratch.BlockType.COMMAND,
+                        text:"断点",
+                        arguments:{}
                     }
                 ]
             }
@@ -432,7 +442,7 @@
                 }
                 if(block.opcode===`${ExtensionsName}_declareVariable`){
                     const variable=this.descendInputOfBlock(block,"variable");
-                    //关键，如果不是纯字面量节点就直接认为是有潜在动态的可能，标记一个跨越AST和JSG的对象为true，下面同理
+                    //关键，如果不是纯字面量节点就直接认为是有潜在动态的可能，标记一个跨越AST和JSG的对象（这里用this.script与自定义属性设为true，下面同理
                     if(variable.opcode!=="constant")this.script[ASTGeneratorStub_dynamic]=true;
                     return{
                         kind:`${ExtensionsName}.declareVariable`,
@@ -468,6 +478,7 @@
                         substack:this.descendSubstack(block,"SUBSTACK")
                     };
                 }
+                if(block.opcode===`${ExtensionsName}_compilerdebug`)return{kind:`${ExtensionsName}.compilerdebug`};
                 //其他积木交给原函数处理
                 return originalDescendStackedBlock.call(this,block);
             };
@@ -506,9 +517,8 @@
             */
 
             //唯一属性名
-            const JSGeneratorStub_SymbolName=`JSGeneratorStub_${ExtensionsName}_SymbolName`;
+            const JSGeneratorStub_SymbolName=`JSGeneratorStub_SymbolName_${ExtensionsName}`;
             const JSGeneratorStub_localVariableStoreObject=`${JSGeneratorStub_SymbolName}_localVariableStoreObject`;
-            // const JSGeneratorStub_localVariableEncode=`${JSGeneratorStub_SymbolName}_localVariableEncode`;
             const JSGeneratorStub_functionName=`${JSGeneratorStub_localVariableStoreObject}_getKeyInObj`;
             const JSGeneratorStub_localVariableIDcnt=Symbol("JSGeneratorStub_localVariableIDcnt");
             const JSGeneratorStub_localVariable=Symbol("JSGeneratorStub_localVariable");
@@ -557,7 +567,7 @@
             //idx表示从倒数第idx个栈帧开始
             function JSGeneratorStub_getLocalDomainFirstprototype(obj,idx=1,num=1){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
-                //这里将num的意义从“获取第num个”转移为“先无视找到的cnt(num-1)个”的“作用域”
+                //这里将num的意义从“获取第num个”转移为“先无视找到的cnt个”的“作用域”（cnt=num-1）
                 --num;
                 //这里就是标准的遍历行为
                 for(let i=stackframes.length-idx;i>=0;--i){
@@ -593,9 +603,9 @@
                 return{pd:false,scopeName:null};//一般此时的scopeName没有用，因为纯粹查询只关心在不在，不在自然不会用到任何作用域
             }
 
-            //返回当前父栈帧有没有存放变量，如果返回false，则顺便创建当前父栈帧存放变量
+            //返回当前父栈帧有没有存放变量，如果返回false，则顺便创建作用域存放变量
             //pd参数同理
-            //op参数表示是否忽略name，直接创建。
+            //op参数表示是否忽略name，直接创建作用域。
             //一般只和pd为true的时候用
             function JSGeneratorStub_CreateVariable(name,obj,pd=false,idx=2,op=false){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
@@ -638,16 +648,40 @@
             
             //编译积木
             //防止某些扩展的不标准编译导致不编译作用域，我直接强制运用作用域。（可能不需要，但是怎么没效果）
-            const originalDescendStack=JSGeneratorStub.prototype.descendStack;
-            JSGeneratorStub.prototype.descendStack=function(...args){
-                this.source+="{\n";
-                originalDescendStack.call(this,...args);
-                this.source+="}\n";
-            }
+            // const originalDescendStack=JSGeneratorStub.prototype.descendStack;
+            // JSGeneratorStub.prototype.descendStack=function(...args){
+            //     this.source+="{\n";
+            //     originalDescendStack.call(this,...args);
+            //     this.source+="}\n";
+            // }
 
-            const originalDescendStackedBlockJS=JSGeneratorStub.prototype.descendStackedBlock;
-            JSGeneratorStub.prototype.descendStackedBlock=function(node){
+            //v0.4.7 : bug修复
+            //因为篡改时机可能不是永恒最高的，因此需要动态注入
+            //使用Object.defineProperty篡改
 
+            //篡改对象属性行为的函数，使用函数闭包，隐藏内部变量
+            //嗯对超级长难句函数名。
+            function BindFuncValueOfKeyInObjectToTopCode(obj,key,func){
+                let tempFunc=obj[key];
+                Object.defineProperty(obj,key,{
+                    get:function(){return tempFunc;},
+                    set:function(newFunc){
+                        //主逻辑
+                        if(typeof newFunc==="function"){
+                            tempFunc=function(...arg){
+                                func.call(this,...arg);
+                                return newFunc.call(this,...arg);
+                            }
+                        }
+                        //小处理，不用谢。（不是）
+                        else throw new TypeError(`${key} must be a function`);
+                    },
+                    configurable:true,
+                    enumerable:true
+                });
+            };
+
+            BindFuncValueOfKeyInObjectToTopCode(JSGeneratorStub.prototype,"descendStackedBlock",function(node){
                 //注意到任何一个积木段栈帧至少有一项元素，而且每个块级别的积木肯定经过这个函数
                 //而且每次tw编译不同积木段是采用的是不同的this对象
                 //所以只要this里没有标记过就一定是第一个积木
@@ -676,6 +710,24 @@
                 //这就导致之前的frame的自定义属性没有被删除，就导致了一系列离谱的错误
                 //长记性了，这玩意卡了我4小时。
                 delete this.frames[this.frames.length-1][JSGeneratorStub_localVariable];
+                //v0.4.6 :
+                //我又服了。
+                //怎么还有篡改时机的问题。
+                //直接提升优先级。
+            });
+
+            BindFuncValueOfKeyInObjectToTopCode(JSGeneratorStub.prototype,"descendInput",function(node){
+                //又长记性了。
+                //怎么输入积木不清空也变量泄漏访问啊
+                //这玩意卡了我15分钟。
+                delete this.frames[this.frames.length-1][JSGeneratorStub_localVariable];
+                //v0.4.7 :
+                //我又双叒叕服了。
+                //直接提升优先级。
+            });
+
+            const originalDescendStackedBlockJS=JSGeneratorStub.prototype.descendStackedBlock;
+            JSGeneratorStub.prototype.descendStackedBlock=function(node){
 
                 //新建局部域
                 if(node.kind===`${ExtensionsName}.localDomain`){
@@ -826,7 +878,10 @@
                             isLoop:true,
                             isLastBlock:false,
                         });
-                        this.source+='}\n';
+                        //v0.4.7 : bug修复
+                        //差点忘了Scratch循环积木隐式帧让步规则。
+                        //统一一下行为。
+                        this.source+="yield;\n}\n";
                     }
                     //静态模式
                     else{
@@ -848,8 +903,15 @@
                             isLoop:true,
                             isLastBlock:false,
                         });
-                        this.source+='}\n';
+                        //v0.4.7 : bug修复
+                        //差点忘了Scratch循环积木隐式帧让步规则。
+                        //统一一下行为。
+                        this.source+="yield;\n}\n";
                     }
+                    return;
+                }
+                if(node.kind===`${ExtensionsName}.compilerdebug`){
+                    this.source+='console.log("断点");\n';
                     return;
                 }
                 return originalDescendStackedBlockJS.call(this,node);
@@ -857,11 +919,6 @@
 
             const originalDescendInputJS=JSGeneratorStub.prototype.descendInput;
             JSGeneratorStub.prototype.descendInput=function(node){
-
-                //又长记性了。
-                //怎么输入不清空也变量泄漏访问啊
-                //这玩意卡了我15分钟。
-                delete this.frames[this.frames.length-1][JSGeneratorStub_localVariable];
 
                 //获取局部变量
                 if(node.kind===`${ExtensionsName}.getVariable`){
@@ -885,7 +942,7 @@
                         const obj=JSGeneratorStub_CheckIfItExists(encode_variable,this,true);
                         const pd=obj.pd;
                         const scopeName=obj.scopeName;
-                        if(pd)return new TypedInput(`(${scopeName}_${encode_variable}??"")`,TYPE_UNKNOWN);
+                        if(pd)return new TypedInput(`${scopeName}_${encode_variable}`,TYPE_UNKNOWN);
                         else return new TypedInput(`""`,TYPE_UNKNOWN);
                     }
                 }
@@ -933,16 +990,18 @@
             if(!obj){
                 const num=toNumber(args.num);
                 const variable=toString(args.variable);
+                //创建两个作用域，第一个用来存放循环的变量，第二个占位
+                const LoopLocalVariableObj=createLocalVariableObj(util.thread,true,1);
+                createLocalVariableObj(util.thread,true,1);
                 obj=util.stackFrame[localVariable_loopInit]={
                     END:num,
                     cur:1,
-                    variable:variable
+                    variable:variable,
+                    LoopLocalVariableObj:LoopLocalVariableObj
                 }
-                //创建两个作用域，第一个用来存放循环的变量
-                createLocalVariableObj(util.thread,true,1)[variable]=obj.cur;
-                createLocalVariableObj(util.thread,true,1);
+                LoopLocalVariableObj[variable]=obj.cur;
             }
-            else getLocalVariableObj(obj.variable,util.thread,1)[obj.variable]=++obj.cur;
+            else obj.LoopLocalVariableObj[obj.variable]=++obj.cur;
             if(obj.cur<=obj.END)util.startBranch(1,true);
         }
         debugLog(args,util){
@@ -952,6 +1011,9 @@
             const stackFrames=[];
             for(const it of getStackFrames(util.thread))stackFrames.push({...it});
             console.log(stackFrames);
+        }
+        compilerdebug(args,util){
+
         }
     }
     Scratch.extensions.register(new LocalVariableExtensions());
