@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs | CCW社区的 Arkos | 所有前作者 / ...
 // License: 继承 | 未定义？（源码并没有写什么协议） | 比 MIT 更宽松的协议（前者都不满足的默认情况） / ...
 // Scratch-compatible: false
-// Extended version: v0.4.7
+// Extended version: v0.4.8
 
 /* 事先声明：
  *
@@ -95,6 +95,10 @@
      修复因篡改后注入的代码不是永恒最高的导致的bug
      修复扩展的循环积木没有的隐式帧让步功能bug
      优化部分逻辑
+ * - v0.4.8：
+     修复v0.3.5重构作用域设计时就存在的问题：栈顶删除的属性和实际采用的属性名不一致的问题
+     好家伙之前一直没测试过作用域。竟然没发现。
+     整改注入函数，更加通用
 */
 
 /* 设计Tips：
@@ -478,6 +482,7 @@
                         substack:this.descendSubstack(block,"SUBSTACK")
                     };
                 }
+                //调试积木
                 if(block.opcode===`${ExtensionsName}_compilerdebug`)return{kind:`${ExtensionsName}.compilerdebug`};
                 //其他积木交给原函数处理
                 return originalDescendStackedBlock.call(this,block);
@@ -516,13 +521,19 @@
              *            读取其值，如果没有就返回空字符串
             */
 
-            //唯一属性名
+            //生成唯一字符串属性名
             const JSGeneratorStub_SymbolName=`JSGeneratorStub_SymbolName_${ExtensionsName}`;
+            //作用域对象唯一字符串前缀
             const JSGeneratorStub_localVariableStoreObject=`${JSGeneratorStub_SymbolName}_localVariableStoreObject`;
+            //唯一函数名
             const JSGeneratorStub_functionName=`${JSGeneratorStub_localVariableStoreObject}_getKeyInObj`;
+            //计数属性
             const JSGeneratorStub_localVariableIDcnt=Symbol("JSGeneratorStub_localVariableIDcnt");
-            const JSGeneratorStub_localVariable=Symbol("JSGeneratorStub_localVariable");
+            //弃用。
+            // const JSGeneratorStub_localVariable=Symbol("JSGeneratorStub_localVariable");
+            //初始化属性
             const JSGeneratorStub_initPD=Symbol("JSGeneratorStub_initPD");
+            //栈帧数组属性
             const JSGeneratorStub_Object=Symbol("JSGeneratorStub_Object");
 
             //共享函数
@@ -567,15 +578,13 @@
             //idx表示从倒数第idx个栈帧开始
             function JSGeneratorStub_getLocalDomainFirstprototype(obj,idx=1,num=1){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
-                //这里将num的意义从“获取第num个”转移为“先无视找到的cnt个”的“作用域”（cnt=num-1）
-                --num;
                 //这里就是标准的遍历行为
                 for(let i=stackframes.length-idx;i>=0;--i){
                     const frame=stackframes[i];
                     if(frame[JSGeneratorStub_Object]){
                         const scopes=frame[JSGeneratorStub_Object];
                         for(let j=scopes.length-1;j>=0;--j){
-                            if(num>0)--num;
+                            if(num>1)--num;
                             else return scopes[j].scopeName;
                         }
                     }
@@ -603,7 +612,7 @@
                 return{pd:false,scopeName:null};//一般此时的scopeName没有用，因为纯粹查询只关心在不在，不在自然不会用到任何作用域
             }
 
-            //返回当前父栈帧有没有存放变量，如果返回false，则顺便创建作用域存放变量
+            //返回当前父栈帧有没有存放变量，如果没有返回false，则顺便创建作用域存放变量
             //pd参数同理
             //op参数表示是否忽略name，直接创建作用域。
             //一般只和pd为true的时候用
@@ -631,7 +640,7 @@
 
             //其实返回false就是let的时机，顺便而已
             //这两玩意返回的是一个对象{pd:查询结果,scopeName:给出这个结果的作用域的名称（可以理解为负责人）}
-            //配合pd，直接组合出scopeName可以有效避免一些来源不明的声明和使用
+            //配合pd，直接scopeName和组合编码变量名可以有效避免一些来源不明的声明和使用，避免某些编译出来的代码是语法错误
 
             //变量名编码
             //至于为什么可以忽略字面量的类型直接编码，可以这么想：
@@ -661,16 +670,38 @@
 
             //篡改对象属性行为的函数，使用函数闭包，隐藏内部变量
             //嗯对超级长难句函数名。
-            function BindFuncValueOfKeyInObjectToTopCode(obj,key,func){
+            //v0.4.8 : 行为更改
+            //主要是整理成更加通用的写法，便于扩展间的逻辑
+            //思路就是在对象内部添加独立的属性存储前置函数
+            //这样就可以将前值函数与对象绑定，而不是每次都篡改一遍方法导致出问题了
+            //定义一个前置函数的前缀字符串
+            //注意由于前置函数的返回值通常无效，所以可以放心修改
+            const FrontFunction="__FrontFunction__";
+            function BindFuncValueOfKeyInObjectToPushTopCode(obj,key,func){
+                //属性名构造
+                const FrontFunction_Key=`${FrontFunction}${key}`;
+                //如果已经有了前置函数，只需修改前置函数即可
+                if(Object.prototype.hasOwnProperty.call(obj,FrontFunction_Key)){
+                    const _FrontFunction_Key=obj[FrontFunction_Key];
+                    obj[FrontFunction_Key]=function(...args){
+                        _FrontFunction_Key.call(this,...args);
+                        return func.call(this,...args);
+                    }
+                    return;
+                }
+                //否则就新建，直接指向func
+                obj[FrontFunction_Key]=func;
+                //存储最终返回的函数
                 let tempFunc=obj[key];
+                //修改
                 Object.defineProperty(obj,key,{
                     get:function(){return tempFunc;},
                     set:function(newFunc){
                         //主逻辑
                         if(typeof newFunc==="function"){
-                            tempFunc=function(...arg){
-                                func.call(this,...arg);
-                                return newFunc.call(this,...arg);
+                            tempFunc=function(...args){
+                                obj[FrontFunction_Key].call(this,...args);
+                                return newFunc.call(this,...args);
                             }
                         }
                         //小处理，不用谢。（不是）
@@ -681,7 +712,7 @@
                 });
             };
 
-            BindFuncValueOfKeyInObjectToTopCode(JSGeneratorStub.prototype,"descendStackedBlock",function(node){
+            const JSGeneratorStub_initFunction=function(node){
                 //注意到任何一个积木段栈帧至少有一项元素，而且每个块级别的积木肯定经过这个函数
                 //而且每次tw编译不同积木段是采用的是不同的this对象
                 //所以只要this里没有标记过就一定是第一个积木
@@ -709,22 +740,25 @@
                 //我服了，tw太懒了，每个同级frame不新建，而是直接设置新的参数
                 //这就导致之前的frame的自定义属性没有被删除，就导致了一系列离谱的错误
                 //长记性了，这玩意卡了我4小时。
-                delete this.frames[this.frames.length-1][JSGeneratorStub_localVariable];
+                delete this.frames[this.frames.length-1][JSGeneratorStub_Object];
                 //v0.4.6 :
                 //我又服了。
                 //怎么还有篡改时机的问题。
                 //直接提升优先级。
-            });
+            }
 
-            BindFuncValueOfKeyInObjectToTopCode(JSGeneratorStub.prototype,"descendInput",function(node){
-                //又长记性了。
-                //怎么输入积木不清空也变量泄漏访问啊
-                //这玩意卡了我15分钟。
-                delete this.frames[this.frames.length-1][JSGeneratorStub_localVariable];
-                //v0.4.7 :
-                //我又双叒叕服了。
-                //直接提升优先级。
-            });
+            BindFuncValueOfKeyInObjectToPushTopCode(JSGeneratorStub.prototype,"descendStackedBlock",JSGeneratorStub_initFunction);
+            BindFuncValueOfKeyInObjectToPushTopCode(JSGeneratorStub.prototype,"descendInput",JSGeneratorStub_initFunction);
+            //又长记性了。
+            //怎么输入积木不清空也变量泄漏访问啊
+            //这玩意卡了我15分钟。
+            //v0.4.7 :
+            //我又双叒叕服了。
+            //直接提升优先级。
+            //v0.4.8 ：
+            //我又又双双叒叒叕叕服了。
+            //怎么属性名不一样啊。
+            //这都没发现吗。
 
             const originalDescendStackedBlockJS=JSGeneratorStub.prototype.descendStackedBlock;
             JSGeneratorStub.prototype.descendStackedBlock=function(node){
@@ -910,6 +944,7 @@
                     }
                     return;
                 }
+                //调试积木
                 if(node.kind===`${ExtensionsName}.compilerdebug`){
                     this.source+='console.log("断点");\n';
                     return;
