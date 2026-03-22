@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs
 // License: 比 MIT 更宽松的协议 / A more permissive license than MIT
 // Scratch-compatible: true
-// Extended version: v0.0.2
+// Extended version: v0.1.3
 
 /* 更新 Tips:
  * - v0.0.0：
@@ -13,16 +13,22 @@
      新增矩阵积木的更多承载方式
  * - v0.0.2：
      修复构成幂运算的积木中的阴影块缺失的问题
+ * - v0.1.3：
+     优化和修复某些bug
+     新增显示与隐藏不常用积木的功能
 */
 
 (function (Scratch) {
     "use strict";
 
-    function XMLtoBlock(xml,pd=false) {
-        const obj={ blockType: Scratch.BlockType.XML, xml };
+    function XMLtoBlock(xml,pd=false,value={}) {
+        const obj={ blockType: Scratch.BlockType.XML, xml , ...value };
         if(pd)obj.filter=[Scratch.TargetType.SPRITE];
         return obj;
     };
+
+    //是否显示不常用积木
+    let showAndHidePD=false;
 
     //为了避免重名，直接将名字缩写写进扩展
     class WxxbjsScratchBlocksExtension {
@@ -34,7 +40,13 @@
                 color2: "#cf8b17",
                 docsURI: "https://en.scratch-wiki.info/wiki/Hidden_Blocks#Events",
                 blocks: [
-                    // #region --------------- 运动 --------------- 
+                    // #region --------------- 运动 ---------------
+                    {
+                        blockType: Scratch.BlockType.BUTTON,
+                        text: showAndHidePD?"隐藏不常用积木":"显示不常用积木",
+                        func:"showAndHideSwitch"
+                    },
+                    "---",
                     {
                         blockType: Scratch.BlockType.LABEL,
                         text: "运动"
@@ -93,7 +105,9 @@
                                     </shadow>
                                 </value>
                             </block>
-                            `,true),
+                            `,true,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     // #region --------------- 外观 --------------- 
                     {
                         blockType: Scratch.BlockType.LABEL,
@@ -104,7 +118,7 @@
                             <block type="looks_switchbackdroptoandwait">
                                 <value name="BACKDROP"><shadow type="looks_backdrops"/></value>
                             </block>
-                            `),
+                            `,false),
                     "---",
                     //特殊造型
                     XMLtoBlock(`
@@ -126,7 +140,7 @@
                                 <value name="OPERAND1"><shadow type="looks_backdropnumbername"><field name="NUMBER_NAME">number</field></shadow></value>
                                 <value name="OPERAND2"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
                             </block>
-                            `),
+                            `,false),
                     //造型名称判断
                     XMLtoBlock(`
                             <block type="operator_equals">
@@ -140,7 +154,68 @@
                                 <value name="OPERAND1"><shadow type="looks_backdropnumbername"><field name="NUMBER_NAME">name</field></shadow></value>
                                 <value name="OPERAND2"><shadow type="looks_backdrops"/></value>
                             </block>
-                            `),
+                            `,false),
+                    "---",
+                    //造型名称判断
+                    //自定义判断，而非选择
+                    XMLtoBlock(`
+                            <block type="operator_equals">
+                                <value name="OPERAND1"><shadow type="looks_costumenumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                                <value name="OPERAND2"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                            </block>
+                            `,true,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //背景名称判断
+                    //自定义判断，而非选择
+                    XMLtoBlock(`
+                            <block type="operator_equals">
+                                <value name="OPERAND1"><shadow type="looks_backdropnumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                                <value name="OPERAND2"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //造型名称判断
+                    //用包含进行匹配
+                    XMLtoBlock(`
+                            <block type="operator_contains">
+                                <value name="STRING1"><shadow type="looks_costumenumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                                <value name="STRING2"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                            </block>
+                            `,true,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //背景名称判断
+                    //用包含进行匹配
+                    XMLtoBlock(`
+                            <block type="operator_contains">
+                                <value name="STRING1"><shadow type="looks_backdropnumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                                <value name="STRING2"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //造型名称判断
+                    //反包含
+                    XMLtoBlock(`
+                            <block type="operator_contains">
+                                <value name="STRING1"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                                <value name="STRING2"><shadow type="looks_costumenumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                            </block>
+                            `,true,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //背景名称判断
+                    //反包含
+                    XMLtoBlock(`
+                            <block type="operator_contains">
+                                <value name="STRING1"><shadow type="text"><field name="TEXT"></field></shadow></value>
+                                <value name="STRING2"><shadow type="looks_backdropnumbername"><field name="NUMBER_NAME">name</field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     "---",
                     //对象菜单移除
                     XMLtoBlock(`
@@ -152,12 +227,12 @@
                             <block type="looks_switchbackdropto">
                                 <value name="BACKDROP"><shadow type="text"><field name="TEXT"></field></shadow></value>
                             </block>
-                            `),
+                            `,false),
                     XMLtoBlock(`
                             <block type="looks_switchbackdroptoandwait">
                                 <value name="BACKDROP"><shadow type="text"><field name="TEXT"></field></shadow></value>
                             </block>
-                            `),
+                            `,false),
                     // #region --------------- 声音 --------------- 
                     {
                         blockType: Scratch.BlockType.LABEL,
@@ -194,7 +269,9 @@
                                     <shadow type="event_touchingobjectmenu"/>
                                 </value>
                             </block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     "---",
                     // 当<>为真（严谨版）
                     XMLtoBlock(`
@@ -222,7 +299,9 @@
                                     </block>
                                 </value>
                             </block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //对象菜单移除
                     "---",
                     XMLtoBlock(`
@@ -242,7 +321,7 @@
                     },
                     // [对于()中的每一个[]]，for语句
                     XMLtoBlock(`
-                            <block id="for_each" type="control_for_each">
+                            <block type="control_for_each">
                                 <value name="VALUE">
                                     <shadow type="math_whole_number">
                                         <field name="NUM">10</field>
@@ -252,26 +331,36 @@
                             `),
                     // [当<>重复执行]，while语句
                     XMLtoBlock(`
-                            <block id="while" type="control_while"/>
+                            <block type="control_while"/>
+                            `),
+                    // [所有脚本]
+                    //这个翻译很怪。
+                    XMLtoBlock(`
+                            <block type="control_all_at_once"/>
                             `),
                     "---",
                     //获取计数器
                     XMLtoBlock(`
                             <block type="control_get_counter"/>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //计数器增加
                     XMLtoBlock(`
                             <block type="control_incr_counter"/>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //计数器清空
                     XMLtoBlock(`
                             <block type="control_clear_counter"/>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     "---",
                     //断点积木，解决无尾积木的连接问题和手动实现浪费的不必要时间
                     XMLtoBlock(`
-                            <block type="control_if">
-                                <value name="CONDITION"><shadow type="operator_not"/></value>
+                            <block type="control_all_at_once">
                                 <value name="SUBSTACK"><shadow type="control_stop"><field name="STOP_OPTION">this script</field></shadow></value>
                             </block>
                             `),
@@ -310,7 +399,9 @@
                                 </value>
                                 <value name="OPERAND2"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
                             </block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //获取今天的星期，不是索引，是准确的数字
                     XMLtoBlock(`
                             <block type="operator_add">
@@ -370,36 +461,6 @@
                         blockType: Scratch.BlockType.LABEL,
                         text: "运算"
                     },
-                    //加法
-                    XMLtoBlock(`
-                            <block type="operator_add">
-                                <value name="NUM2"><shadow type="math_number"><field name="NUM"></field></shadow></value>
-                            </block>
-                            `),
-                    XMLtoBlock(`
-                            <block type="operator_add">
-                                <value name="NUM1"><shadow type="math_number"><field name="NUM"></field></shadow></value>
-                            </block>
-                            `),
-                    XMLtoBlock(`
-                            <block type="operator_add">
-                            </block>
-                            `),
-                    //减法
-                    XMLtoBlock(`
-                            <block type="operator_subtract">
-                                <value name="NUM2"><shadow type="math_number"><field name="NUM"></field></shadow></value>
-                            </block>
-                            `),
-                    XMLtoBlock(`
-                            <block type="operator_subtract">
-                                <value name="NUM1"><shadow type="math_number"><field name="NUM"></field></shadow></value>
-                            </block>
-                            `),
-                    XMLtoBlock(`
-                            <block type="operator_subtract">
-                            </block>
-                            `),
                     //幂
                     XMLtoBlock(`
                             <block type="operator_mathop">
@@ -419,6 +480,68 @@
                                 </value>
                             </block>
                             `),
+                    //对数
+                    XMLtoBlock(`
+                            <block type="operator_divide">
+                                <value name="NUM1">
+                                    <block type="operator_mathop">
+                                        <field name="OPERATOR">ln</field>
+                                        <value name="NUM"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                                    </block>
+                                    <shadow type="math_number"><field name="NUM"></field></shadow>
+                                </value>
+                                <value name="NUM2">
+                                    <block type="operator_mathop">
+                                        <field name="OPERATOR">ln</field>
+                                        <value name="NUM"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                                    </block>
+                                    <shadow type="math_number"><field name="NUM"></field></shadow>
+                                </value>
+                            </block>
+                            `),
+                    "---",
+                    //加法
+                    XMLtoBlock(`
+                            <block type="operator_add">
+                                <value name="NUM2"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    XMLtoBlock(`
+                            <block type="operator_add">
+                                <value name="NUM1"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    XMLtoBlock(`
+                            <block type="operator_add">
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    //减法
+                    XMLtoBlock(`
+                            <block type="operator_subtract">
+                                <value name="NUM2"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    XMLtoBlock(`
+                            <block type="operator_subtract">
+                                <value name="NUM1"><shadow type="math_number"><field name="NUM"></field></shadow></value>
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    XMLtoBlock(`
+                            <block type="operator_subtract">
+                            </block>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     // #region --------------- 自制积木 --------------- 
                     {
                         blockType: Scratch.BlockType.LABEL,
@@ -453,6 +576,16 @@
                     XMLtoBlock(`
                             <block type="text"><field name="TEXT"></field></block>
                             `),
+                    "---",
+                    // //不知道
+                    // XMLtoBlock(`
+                    //         <block type="data_listindexall"/>
+                    //         `),
+                    // //不知道
+                    // XMLtoBlock(`
+                    //         <block type="data_listindexrandom"/>
+                    //         `),
+                    "---",
                     //角度，由于单独出现会粘手，所以用运算积木承载一下
                     XMLtoBlock(`
                             <block type="operator_add">
@@ -670,16 +803,43 @@
                     // #region --------------- 菜单 --------------- 
                     {
                         blockType: Scratch.BlockType.LABEL,
-                        text: "菜单"
+                        text: "菜单",
+                        hideFromPalette:!showAndHidePD
                     },
                     XMLtoBlock(`
-                            <block type="event_touchingobjectmenu"></block>
-                            `),
+                            <block type="event_touchingobjectmenu"/>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     XMLtoBlock(`
-                            <block type="event_broadcast_menu"></block>
-                            `),
+                            <block type="event_broadcast_menu"/>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
+                    "---",
+                    // #region --------------- 扩展 --------------- 
+                    {
+                        blockType: Scratch.BlockType.LABEL,
+                        text: "扩展积木（需要先加载对应扩展）",
+                        hideFromPalette:!showAndHidePD
+                    },
+                    // #region --------------- micro:bit --------------- 
+                    {
+                        blockType: Scratch.BlockType.LABEL,
+                        text: "micro:bit",
+                        hideFromPalette:!showAndHidePD
+                    },
+                    XMLtoBlock(`
+                            <block type="microbit_menu_pinState"/>
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                 ],
             };
+        }
+        showAndHideSwitch(){
+            showAndHidePD=!showAndHidePD;
+            vm.extensionManager.refreshBlocks();
         }
     }
     Scratch.extensions.register(new WxxbjsScratchBlocksExtension());

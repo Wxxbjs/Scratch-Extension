@@ -4,7 +4,7 @@
 // By: 无心小白僵尸 / Wxxbjs | CCW社区的 Arkos | 所有前作者 / ...
 // License: 继承 | 未定义？（源码并没有写什么协议） | 比 MIT 更宽松的协议（前者都不满足的默认情况） / ...
 // Scratch-compatible: false
-// Extended version: v0.4.8
+// Extended version: v0.4.10
 
 /* 事先声明：
  *
@@ -99,6 +99,11 @@
      修复v0.3.5重构作用域设计时就存在的问题：栈顶删除的属性和实际采用的属性名不一致的问题
      好家伙之前一直没测试过作用域。竟然没发现。
      整改注入函数，更加通用
+ * - v0.4.9:
+     差不多是忘了。
+     优化和整改代码，删除某些注释，应该。
+ * - v0.4.10：
+     修复动态模式下，扩展内置的循环的作用域泄漏的bug
 */
 
 /* 设计Tips：
@@ -139,53 +144,6 @@
 
 (function(Scratch){
     "use strict";
-
-     // 更多类型侦测
-    function type(value) {
-        if(value===null)return"null";
-        if(value===undefined)return"undefined";
-        if(value instanceof Map)return"map";
-        if(value instanceof Set)return"set";
-        if(value instanceof Date)return"date";
-        if(value instanceof Array)return"array";
-        if(value instanceof RegExp)return"regexp";
-        if(value instanceof Function)return"function";
-        return typeof value;
-    }
-
-    //及其深度拷贝对象，调试友好
-    //考虑到循环引用，所以用Map存储，原对象映射新对象，到时候自己构造自己
-    function deepCopy(obj,visited=new Map()){
-        if(visited.has(obj))return visited.get(obj);
-        const op=type(obj);
-        if(op==="object"){
-            const newObj={};
-            visited.set(obj,newObj);
-            [...Object.getOwnPropertyNames(obj),...Object.getOwnPropertySymbols(obj)].forEach(it=>newObj[deepCopy(it,visited)]=deepCopy(obj[it],visited));
-            return newObj;
-        }
-        else if(op==="array"){
-            const newObj=[];
-            visited.set(obj,newObj);
-            obj.forEach(it=>newObj.push(deepCopy(it,visited)));
-            return newObj;
-        }
-        else if(op==="map"){
-            const newMap=new Map();
-            visited.set(obj,newMap);
-            obj.forEach((value,key)=>newMap.set(deepCopy(key,visited),deepCopy(value,visited)));
-            return newMap;
-        }
-        else if(op==="set"){
-            const newSet=new Set();
-            visited.set(obj,newSet);
-            obj.forEach(it=>newSet.add(deepCopy(it,visited)));
-            return newSet;
-        }
-        else if(op==="regexp")return new RegExp(obj.source,obj.flags);
-        else if(op==="date")return new Date(obj);
-        else return obj;
-    }
     
     const Cast=Scratch.Cast;
     const vm=Scratch.vm;
@@ -415,10 +373,15 @@
             const dangerousExports=Scratch.vm.exports?.i_will_not_ask_for_help_when_these_break?.();
             //没有编译器就不编译
             if(!dangerousExports)return;
+            //提取属性
             const ASTGeneratorStub=dangerousExports.ScriptTreeGenerator;
             const JSGeneratorStub=dangerousExports.JSGenerator;
             const TypedInput=JSGeneratorStub.unstable_exports.TypedInput;
+            const TYPE_NUMBER=JSGeneratorStub.unstable_exports.TYPE_NUMBER;
+            const TYPE_STRING=JSGeneratorStub.unstable_exports.TYPE_STRING;
+            const TYPE_BOOLEAN=JSGeneratorStub.unstable_exports.TYPE_BOOLEAN;
             const TYPE_UNKNOWN=JSGeneratorStub.unstable_exports.TYPE_UNKNOWN;
+            const TYPE_NUMBER_NAN=JSGeneratorStub.unstable_exports.TYPE_NUMBER_NAN;
 
             /* 冷知识：
              * dangerousExports.JSGenerator返回的类其实是JSGeneratorStub而不是JSGenerator
@@ -529,8 +492,6 @@
             const JSGeneratorStub_functionName=`${JSGeneratorStub_localVariableStoreObject}_getKeyInObj`;
             //计数属性
             const JSGeneratorStub_localVariableIDcnt=Symbol("JSGeneratorStub_localVariableIDcnt");
-            //弃用。
-            // const JSGeneratorStub_localVariable=Symbol("JSGeneratorStub_localVariable");
             //初始化属性
             const JSGeneratorStub_initPD=Symbol("JSGeneratorStub_initPD");
             //栈帧数组属性
@@ -574,9 +535,8 @@
                 return{scopeName:scopes.at(-1).scopeName,pd:createDetectionPD};
             }
 
-            //获取倒数第num个作用域开始查找的第一个可存储对象的字符串名称，如果没有就返回“null”
-            //idx表示从倒数第idx个栈帧开始
-            function JSGeneratorStub_getLocalDomainFirstprototype(obj,idx=1,num=1){
+            //获取倒数第idx个栈帧开始查找的第num个作用域的字符串名称，如果没有就返回“null”
+            function JSGeneratorStub_getLocalDomainPrototype(obj,idx=1,num=1){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
                 //这里就是标准的遍历行为
                 for(let i=stackframes.length-idx;i>=0;--i){
@@ -608,15 +568,15 @@
                         }
                     }
                 }
-                if(!op)return JSGeneratorStub_CreateVariable(name,obj);
-                return{pd:false,scopeName:null};//一般此时的scopeName没有用，因为纯粹查询只关心在不在，不在自然不会用到任何作用域
+                if(op)return{pd:false,scopeName:null};//一般此时的scopeName没有用，因为纯粹查询只关心在不在，不在自然不会用到任何作用域
+                return JSGeneratorStub_CreateScope(name,obj);
             }
 
             //返回当前父栈帧有没有存放变量，如果没有返回false，则顺便创建作用域存放变量
             //pd参数同理
             //op参数表示是否忽略name，直接创建作用域。
             //一般只和pd为true的时候用
-            function JSGeneratorStub_CreateVariable(name,obj,pd=false,idx=2,op=false){
+            function JSGeneratorStub_CreateScope(name,obj,pd=false,idx=2,op=false){
                 const stackframes=JSGeneratorStub_getStackframes(obj);
                 //绝对先从父栈帧开始考虑
                 const frame=stackframes[stackframes.length-idx];
@@ -654,15 +614,6 @@
                 }
                 return res;
             }
-            
-            //编译积木
-            //防止某些扩展的不标准编译导致不编译作用域，我直接强制运用作用域。（可能不需要，但是怎么没效果）
-            // const originalDescendStack=JSGeneratorStub.prototype.descendStack;
-            // JSGeneratorStub.prototype.descendStack=function(...args){
-            //     this.source+="{\n";
-            //     originalDescendStack.call(this,...args);
-            //     this.source+="}\n";
-            // }
 
             //v0.4.7 : bug修复
             //因为篡改时机可能不是永恒最高的，因此需要动态注入
@@ -670,8 +621,9 @@
 
             //篡改对象属性行为的函数，使用函数闭包，隐藏内部变量
             //嗯对超级长难句函数名。
+
             //v0.4.8 : 行为更改
-            //主要是整理成更加通用的写法，便于扩展间的逻辑
+            //主要是整理成更加通用的写法，便于扩展间的开发
             //思路就是在对象内部添加独立的属性存储前置函数
             //这样就可以将前值函数与对象绑定，而不是每次都篡改一遍方法导致出问题了
             //定义一个前置函数的前缀字符串
@@ -704,7 +656,7 @@
                                 return newFunc.call(this,...args);
                             }
                         }
-                        //小处理，不用谢。（不是）
+                        //小处理
                         else throw new TypeError(`${key} must be a function`);
                     },
                     configurable:true,
@@ -712,7 +664,7 @@
                 });
             };
 
-            const JSGeneratorStub_initFunction=function(node){
+            BindFuncValueOfKeyInObjectToPushTopCode(JSGeneratorStub.prototype,"descendStackedBlock",function(node){
                 //注意到任何一个积木段栈帧至少有一项元素，而且每个块级别的积木肯定经过这个函数
                 //而且每次tw编译不同积木段是采用的是不同的this对象
                 //所以只要this里没有标记过就一定是第一个积木
@@ -745,30 +697,26 @@
                 //我又服了。
                 //怎么还有篡改时机的问题。
                 //直接提升优先级。
-            }
-
-            BindFuncValueOfKeyInObjectToPushTopCode(JSGeneratorStub.prototype,"descendStackedBlock",JSGeneratorStub_initFunction);
-            BindFuncValueOfKeyInObjectToPushTopCode(JSGeneratorStub.prototype,"descendInput",JSGeneratorStub_initFunction);
-            //又长记性了。
-            //怎么输入积木不清空也变量泄漏访问啊
-            //这玩意卡了我15分钟。
-            //v0.4.7 :
-            //我又双叒叕服了。
-            //直接提升优先级。
-            //v0.4.8 ：
-            //我又又双双叒叒叕叕服了。
-            //怎么属性名不一样啊。
-            //这都没发现吗。
+            });
+            //v0.4.9 ：
+            //在输入积木上做删除是不必要的
+            //因为调用输入的积木绝对是块，块绝对会先清空
+            //而所谓复用栈帧只是逐块执行时复用
+            //如果涉及分支或者输入表达式，那么还是会单开栈帧
+            //因此输入积木的清空是不必要的
+            //
+            //本来块的清空也是不必要的。
+            //但是由于tw没有将descendStack暴露在JSGeneratorStub，只在JSGenerator在实例化时才有这个方法
+            //因此就目前而言，还是需要通过这个“笨”方法来维护。
 
             const originalDescendStackedBlockJS=JSGeneratorStub.prototype.descendStackedBlock;
             JSGeneratorStub.prototype.descendStackedBlock=function(node){
-
                 //新建局部域
                 if(node.kind===`${ExtensionsName}.localDomain`){
                     this.source+="{\n";
                     this.descendStack(node.substack,{
                         isLoop:false,
-                        isLastBlock:false,
+                        isLastBlock:false
                     });
                     this.source+='}\n';
                     return;
@@ -787,7 +735,7 @@
                         const scopeName=obj.scopeName;
                         const pd=obj.pd;
                         //没有创建过局部域，就先声明一次
-                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainFirstprototype(this,2,2)});\n`;
+                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainPrototype(this,2,2)});\n`;
                         //设置（对象的设置总是在原型链的最低层，不会上浮查找，所以直接设置即可）
                         this.source+=`${scopeName}[${variable}]=${value};\n`;
                     }
@@ -796,7 +744,7 @@
                         // console.log(deepCopy([this,this.frames]));
 
                         const encode_variable=JSGeneratorStub_encode(variable);
-                        const obj=JSGeneratorStub_CreateVariable(encode_variable,this);
+                        const obj=JSGeneratorStub_CreateScope(encode_variable,this);
                         const pd=obj.pd;
                         const scopeName=obj.scopeName;
                         const variableName=`${scopeName}_${encode_variable}`;
@@ -826,7 +774,7 @@
                         const scopeName=obj.scopeName;
                         const pd=obj.pd;
                         //没有创建过局部域，就先声明一次
-                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainFirstprototype(this,2,2)});\n`;
+                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainPrototype(this,2,2)});\n`;
                         
                         //上浮逻辑（因为需要从底部向上浮动）
                         this.source+=`(function(variable){${JSGeneratorStub_functionName}(${scopeName},variable)[variable]=${value}})(${variable});\n`;
@@ -864,8 +812,8 @@
                         const scopeName=obj.scopeName;
                         const pd=obj.pd;
                         //没有创建过局部域，就先声明一次
-                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainFirstprototype(this,2,2)});\n`;
-                        //一大堆处理。简单的说就是用匿名函数立刻执行，然后用(+(num)||0)强制将参数转为数字，相加
+                        if(pd)this.source+=`const ${scopeName}=Object.create(${JSGeneratorStub_getLocalDomainPrototype(this,2,2)});\n`;
+                        //用匿名函数立刻执行，然后用(+(num)||0)强制将参数转为数字，相加
                         this.source+=`(function(variable){const obj=${JSGeneratorStub_functionName}(${scopeName},variable);obj[variable]=(+obj[variable]||0)+(+${value}||0);})(${variable})\n;`;
                     }
                     //静态模式
@@ -900,17 +848,21 @@
                         const obj2=JSGeneratorStub_createLocalDomainUniqueName(this,true,1);
                         //不用想，肯定最底下的局部域一定要找一个父作用域，第二个只需要连接第一个即可
                         //而且将最底下的作用域直接设置一个值去使用for的语法就行了
+                        //v0.4.8 : 修复作用域泄漏的问题
+                        //循环体内的作用域应该单开新的作用域
+                        //即对于每一次循环而言，每一次循环的作用域应该是独立的
+                        //除了第一个跨循环体内生命周期的作用域，即存储变量i的作用域
                         const scopeName1=obj1.scopeName;
                         const scopeName2=obj2.scopeName;
                         // this.source+=`console.log("断点");\n`;
-                        this.source+=`const ${scopeName1}=Object.create(${JSGeneratorStub_getLocalDomainFirstprototype(this,2,1)});\n`;
-                        this.source+=`const ${scopeName2}=Object.create(${scopeName1});\n`;
+                        this.source+=`const ${scopeName1}=Object.create(${JSGeneratorStub_getLocalDomainPrototype(this,2,1)});\n`;
                         this.source+=`const ${scopeName1}_variable=${variable};\n`;
                         this.source+=`for(let i=1,I=${num};i<=I;++i){\n`;
                         this.source+=`${scopeName1}[${scopeName1}_variable]=i;\n`;
+                        this.source+=`const ${scopeName2}=Object.create(${scopeName1});\n`;
                         this.descendStack(node.substack,{
                             isLoop:true,
-                            isLastBlock:false,
+                            isLastBlock:false
                         });
                         //v0.4.7 : bug修复
                         //差点忘了Scratch循环积木隐式帧让步规则。
@@ -924,10 +876,10 @@
                         //pd其实可以不用管了，毕竟绝对是新建的
                         const encode_variable=JSGeneratorStub_encode(variable);
                         //第一个作用域关心当前的变量名，固不能忽略name且不能乱填name
-                        const obj1=JSGeneratorStub_CreateVariable(encode_variable,this,true,1,false);
-                        const obj2=JSGeneratorStub_CreateVariable(null,this,true,1,true);
+                        const obj1=JSGeneratorStub_CreateScope(encode_variable,this,true,1,false);
+                        const obj2=JSGeneratorStub_CreateScope(null,this,true,1,true);
                         const scopeName1=obj1.scopeName;
-                        const scopeName2=obj2.scopeName;//其实不用提取。因为第二个就是纯独立于第一个作用域而创建的。
+                        const scopeName2=obj2.scopeName;//其实不用提取。因为第二个就是纯为了独立于第一个作用域而创建的。
                         const variableName=`${scopeName1}_${encode_variable}`;
                         // this.source+=`console.log("断点");\n`;
                         //根据定义，不可由变量自己影响循环的次数
@@ -962,23 +914,22 @@
                     //动态模式
                     if(this.script[ASTGeneratorStub_dynamic]){
                         //获取现有的可以用的存放对象，如果没有就用null冒充
-                        const scopeName=JSGeneratorStub_getLocalDomainFirstprototype(this,2,1);
+                        const scopeName=JSGeneratorStub_getLocalDomainPrototype(this,2,1);
                         //获取逻辑
                         //如果name为null，即不存在存放对象，直接返回空字符串
-                        if(scopeName==="null")return new TypedInput(`""`,TYPE_UNKNOWN);
+                        if(scopeName==="null")return new TypedInput(`""`,TYPE_STRING);
                         //因为js原生就是上浮查找访问，所以不用加一个函数
                         return new TypedInput(`(${scopeName}[${variable}]??"")`,TYPE_UNKNOWN);
                     }
                     //静态模式
                     else{
                         // console.log(deepCopy([this,this.frames]));
-                        
                         const encode_variable=JSGeneratorStub_encode(variable);
                         const obj=JSGeneratorStub_CheckIfItExists(encode_variable,this,true);
                         const pd=obj.pd;
                         const scopeName=obj.scopeName;
                         if(pd)return new TypedInput(`${scopeName}_${encode_variable}`,TYPE_UNKNOWN);
-                        else return new TypedInput(`""`,TYPE_UNKNOWN);
+                        else return new TypedInput(`""`,TYPE_STRING);
                     }
                 }
                 return originalDescendInputJS.call(this,node);
