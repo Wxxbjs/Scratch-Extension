@@ -21,7 +21,7 @@
     const runtime=vm.runtime;
     const renderer=vm.renderer;
 
-    const ExtensionsName="Thread";
+    const ExtensionsName="ThreadManagement";
     const _stage_="_stage_";
     function toString(value){return Cast.toString(value)};
     function toNumber(value){return Cast.toNumber(value)};

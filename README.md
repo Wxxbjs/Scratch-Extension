@@ -26,3 +26,4 @@ Scratch扩展开发（主要在TurboWarp环境下）
 |多相机  |CameraPro|v0.6.11|[具体时间丢失]|
 |局部变量|LocalVariable|v0.4.10|[具体时间丢失]|
 |纯原扩展|WxxbjsScratchBlocksExtension （有点随意了。）|v0.1.3|[具体时间丢失]|
+|线程管理|ThreadManagement|v0.0.0|[具体时间丢失]|
