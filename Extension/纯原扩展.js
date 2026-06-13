@@ -2,7 +2,7 @@
 // ID: WxxbjsScratchBlocksExtension
 // Description: 在原Scratch中也可以使用的“非法”积木，不会破坏纯原项目 / ...
 // By: 无心小白僵尸 / Wxxbjs
-// License: 比 MIT 更宽松的协议 / A more permissive license than MIT
+// License: CC0 / CC0
 // Scratch-compatible: true
 // Extended version: v0.1.3
 
@@ -21,6 +21,8 @@
 (function (Scratch) {
     "use strict";
 
+    const vm=Scratch?.vm??Scratch?.runtime?.extensionManagervm??null;
+
     function XMLtoBlock(xml,pd=false,value={}) {
         const obj={ blockType: Scratch.BlockType.XML, xml , ...value };
         if(pd)obj.filter=[Scratch.TargetType.SPRITE];
@@ -29,6 +31,8 @@
 
     //是否显示不常用积木
     let showAndHidePD=false;
+    //扩展积木刷新标记
+    let RefreshPD=false;
 
     //为了避免重名，直接将名字缩写写进扩展
     class WxxbjsScratchBlocksExtension {
@@ -40,13 +44,14 @@
                 color2: "#cf8b17",
                 docsURI: "https://en.scratch-wiki.info/wiki/Hidden_Blocks#Events",
                 blocks: [
-                    // #region --------------- 运动 ---------------
+                    "---",
                     {
                         blockType: Scratch.BlockType.BUTTON,
                         text: showAndHidePD?"隐藏不常用积木":"显示不常用积木",
                         func:"showAndHideSwitch"
                     },
                     "---",
+                    // #region --------------- 运动 ---------------
                     {
                         blockType: Scratch.BlockType.LABEL,
                         text: "运动"
@@ -396,6 +401,7 @@
                                         </value>
                                         <field name="PROPERTY">costume #</field>
                                     </block>
+                                    <shadow type="text"><field name="TEXT"></field></shadow>
                                 </value>
                                 <value name="OPERAND2"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
                             </block>
@@ -567,15 +573,21 @@
                     //数字
                     XMLtoBlock(`
                             <block type="math_number"><field name="NUM">0</field></block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //非负整数
                     XMLtoBlock(`
                             <block type="math_whole_number"><field name="NUM">0</field></block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     //字符串
                     XMLtoBlock(`
                             <block type="text"><field name="TEXT"></field></block>
-                            `),
+                            `,false,{
+                                hideFromPalette:!showAndHidePD
+                            }),
                     "---",
                     // //不知道
                     // XMLtoBlock(`
@@ -585,7 +597,7 @@
                     // XMLtoBlock(`
                     //         <block type="data_listindexrandom"/>
                     //         `),
-                    "---",
+                    // "---",
                     //角度，由于单独出现会粘手，所以用运算积木承载一下
                     XMLtoBlock(`
                             <block type="operator_add">
@@ -823,23 +835,35 @@
                         text: "扩展积木（需要先加载对应扩展）",
                         hideFromPalette:!showAndHidePD
                     },
+                    {
+                        blockType: Scratch.BlockType.BUTTON,
+                        text: RefreshPD?"展开扩展积木":"折叠扩展积木",
+                        func:"Refresh",
+                        hideFromPalette:!showAndHidePD
+                    },
+                    "---",
                     // #region --------------- micro:bit --------------- 
                     {
                         blockType: Scratch.BlockType.LABEL,
                         text: "micro:bit",
-                        hideFromPalette:!showAndHidePD
+                        hideFromPalette:!showAndHidePD||RefreshPD
                     },
                     XMLtoBlock(`
                             <block type="microbit_menu_pinState"/>
                             `,false,{
-                                hideFromPalette:!showAndHidePD
+                                hideFromPalette:!showAndHidePD||RefreshPD
                             }),
+                    "---",
                 ],
             };
         }
-        showAndHideSwitch(){
+        async showAndHideSwitch(){
             showAndHidePD=!showAndHidePD;
-            vm.extensionManager.refreshBlocks();
+            await vm.extensionManager.refreshBlocks();
+        }
+        async Refresh(){
+            RefreshPD=!RefreshPD;
+            await vm.extensionManager.refreshBlocks();
         }
     }
     Scratch.extensions.register(new WxxbjsScratchBlocksExtension());

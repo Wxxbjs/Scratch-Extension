@@ -1,10 +1,10 @@
-// Name: 多相机 / Camera Pro
+// Name: 多相机 / CameraPro
 // ID: CameraPro
 // Description: 多相机渲染，更多的相机参数，还有更快的性能 / Multi-camera rendering
 // By: 无心小白僵尸 / Wxxbjs
-// License: 比 MIT 更宽松的协议 / A more permissive license than MIT
+// License: CC0 / CC0
 // Scratch-compatible: false
-// Extended version: v0.6.11
+// Extended version: v0.6.12
 
 /* 更新 Tips:
  * - 基本实现了渲染需求，接下来就是处理细节和优化逻辑
@@ -15,7 +15,7 @@
  * - 把关于舞台的处理给做了，现在舞台无法调用有关角色的积木
  
  * - 此后，每次更新都附带对应版本号和更新内容
-     但是由于以上更新的版本号没有记录，所以并没有尊虚这一格式。
+     但是由于以上更新的版本号没有记录，所以并没有遵循这一格式。
 
  * - v0.2.7：
      增加获取角色渲染后的x、y、方向、大小属性
@@ -66,6 +66,9 @@
      这样性能是最高的
      除非你需要某些动态篡改渲染来完成计算的需求
      那么你需要考虑其他的策略
+ * - v0.6.12:
+     整改代码，扩展效果没有明显变化
+     目前来看，有关渲染的函数的并没有返回值，所以直接return是可以的，不需要伪造什么不变的数据再调用函数过一遍作用
 */
 
 (function(Scratch){
@@ -148,7 +151,7 @@
         }
     }
 
-    //坐标变换函数
+    //坐标变换函数（90°为正的绝对方向系）
     function coordinateTransformation(dot,origin){
         const newDot=new Dot();
         const invSin=sin(origin.d);
@@ -156,6 +159,19 @@
         const invSize=origin.s/100;
         newDot.x=origin.x+(dot.x*invSin-dot.y*invCos)*invSize;
         newDot.y=origin.y+(dot.x*invCos+dot.y*invSin)*invSize;
+        newDot.d=dot.d+(origin.d-90);
+        newDot.s=dot.s*invSize;
+        return newDot;
+    }
+
+    //坐标变换函数（旋转方向系（顺时针为正））
+    function coordinateTransformation_Rotate(dot,origin){
+        const newDot=new Dot();
+        const invSin=sin(origin.d);
+        const invCos=cos(origin.d);
+        const invSize=origin.s/100;
+        newDot.x=origin.x+( dot.x*invCos+dot.y*invSin)*invSize;
+        newDot.y=origin.y+(-dot.x*invSin+dot.y*invCos)*invSize;
         newDot.d=dot.d+(origin.d-90);
         newDot.s=dot.s*invSize;
         return newDot;
@@ -570,7 +586,7 @@
 
     //坐标
     const ogUpdatePosition=renderer.exports.Drawable.prototype.updatePosition;
-    renderer.exports.Drawable.prototype.updatePosition=function(position){
+    renderer.exports.Drawable.prototype.updatePosition=function(position,...args){
         //冻结功能
         //如果是冻结，则直接退出
         if(isFreeze.getCurrent())return;
@@ -583,12 +599,12 @@
             target[rendererX]=dot.x;
             target[rendererY]=dot.y;
         }
-        ogUpdatePosition.call(this,position);
+        return ogUpdatePosition.call(this,position,...args);
     }
     
     //方向
-    const ogUpdateDirection=renderer.exports.Drawable.prototype.updateDirection;
-    renderer.exports.Drawable.prototype.updateDirection=function(direction){
+    const _updateDirection=renderer.exports.Drawable.prototype.updateDirection;
+    renderer.exports.Drawable.prototype.updateDirection=function(direction,...args){
         //冻结功能
         //如果是冻结，则直接退出
         if(isFreeze.getCurrent())return;
@@ -597,12 +613,12 @@
         const dot=CameraRenderer(target,new Dot(0,0,direction));
         direction=dot.d;
         if(target&&typeof target==="object")target[rendererD]=dot.d;
-        ogUpdateDirection.call(this,direction);
+        return _updateDirection.call(this,direction,...args);
     }
     
     //大小
-    const ogUpdateScale=renderer.exports.Drawable.prototype.updateScale;
-    renderer.exports.Drawable.prototype.updateScale=function(scale){
+    const _updateScale=renderer.exports.Drawable.prototype.updateScale;
+    renderer.exports.Drawable.prototype.updateScale=function(scale,...args){
         //冻结功能
         //如果是冻结，则直接退出
         if(isFreeze.getCurrent())return;
@@ -611,20 +627,21 @@
         const dot=CameraRenderer(target,new Dot(0,0,90,1));
         const sum=scale.reduce((acc,it,idx)=>acc+=scale[idx]=it*dot.s,0);
         if(target&&typeof target==="object")target[rendererS]=dot.s*100;
-        ogUpdateScale.call(this,scale);
+        return _updateScale.call(this,scale,...args);
     }
 
     //外观积木的对话框
-    const ogPositionBubble=runtime.ext_scratch3_looks._positionBubble;
-    runtime.ext_scratch3_looks._positionBubble=function(target){
+    const __positionBubble=runtime.ext_scratch3_looks._positionBubble;
+    runtime.ext_scratch3_looks._positionBubble=function(target,...args){
         //冻结功能
         //如果是冻结，则直接退出
         if(isFreeze.getCurrent())return;
 
         const ogNativeSize=renderer._nativeSize;
         renderer._nativeSize=[Infinity,Infinity];
-        ogPositionBubble.call(this,target);
+        const result=__positionBubble.call(this,target,...args);
         renderer._nativeSize=ogNativeSize;
+        return result;
     };
 
     //渲染角色
@@ -665,7 +682,7 @@
                     {
                         opcode:"switchOptimization",
                         blockType:Scratch.BlockType.COMMAND,
-                        text:"[OFForON] 相机渲染优化？",
+                        text:"[OFForON] 相机渲染优化",
                         arguments:{
                             OFForON:{
                                 type:Scratch.ArgumentType.STRING,
@@ -676,7 +693,7 @@
                     {
                         opcode:"switchSynchronize",
                         blockType:Scratch.BlockType.COMMAND,
-                        text:"[OFForON] 相机渲染冻结？",
+                        text:"[OFForON] 相机渲染冻结",
                         arguments:{
                             OFForON:{
                                 type:Scratch.ArgumentType.STRING,

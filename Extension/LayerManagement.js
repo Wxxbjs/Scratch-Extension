@@ -2,9 +2,9 @@
 // ID: LayerManagement
 // Description: 业界首个用于 TurboWarp 的图层管理扩展 / The industry's first layer management extension for TurboWarp
 // By: 无心小白僵尸 / Wxxbjs
-// License: 比 MIT 更宽松的协议 / A more permissive license than MIT
+// License: CC0 / CC0
 // Scratch-compatible: false
-// Extended version: v0.6.8
+// Extended version: v0.6.10
 
 /* 更新 Tips:
  * - 更加规范的扩展格式和开发，补充大量注释
@@ -13,6 +13,19 @@
  * - 小bug修复。
  * - 逆天targets引用不是Scratch.vm.runtime.targets。尝试与其斗争。失败。逐放弃。全都得改。
  * - 增加一个新积木
+ 
+ * - 此后，每次更新都附带对应版本号和更新内容
+     但是由于以上更新的版本号没有记录，所以并没有遵循这一格式。
+
+ * - v0.6.10 :
+     整改代码
+     篡改一些函数，避免其他图层操作干扰图层管理扩展
+     文件夹选择器的菜单选项的“全体角色”从“_all_”改为了“_stage_”
+     一个主要原因是因为 _all_ 不是Scratch会主动阻止角色命名为这个的字符串，极端情况会有问题，而 _stage_ 受到保护，即会阻止命名
+     而且语义上同样正确（所有角色可以理解成都在“舞台”这个文件夹下）
+     所以将使用 _stage_ 代替 _all_ 的作用
+     但是可能导致不兼容旧版扩展，但是不会导致加载出错（因为是字符串字段的级别的行为不兼容）
+     那其实也没什么所谓，稍微改一下即可。
 */
 
 (function(Scratch){
@@ -25,7 +38,7 @@
 
     const ExtensionsName="LayerManagement";
     const _myself_="_myself_";
-    const _all_="_all_";
+    const _stage_="_stage_";
     function toString(value){return Cast.toString(value)};
     function toNumber(value){return Cast.toNumber(value)};
     function compare(value1,value2){return Cast.compare(value1,value2)};
@@ -64,6 +77,20 @@
     var hierarchysWeight={};
     //默认层级
     var defaultHierarchy=undefined;
+    //临时开通开关
+    let UPDATE_PD=false;
+
+    //由于角色的图层方法是针对具体实例的，修改不是一劳永逸的，所以将篡改更底层的移动图层的函数的相关函数，控制其作用
+    //如果开启图层管理且未被允许移动，就返回0（不移动），否则就正常传递
+    function filterArg(n){return isLayerManagement.getCurrent()&&!UPDATE_PD?0:n;}
+    const _moveExecutable=runtime.moveExecutable;
+    runtime.moveExecutable=function(executableTarget,delta,...args){
+        return _moveExecutable.call(this,executableTarget,filterArg(delta),...args);
+    }
+    const _setDrawableOrder=renderer.setDrawableOrder;
+    renderer.setDrawableOrder=function(drawableID,order,group,optIsRelative,optMin,...args){
+        return _setDrawableOrder.call(this,drawableID,filterArg(order),group,optIsRelative,optMin,...args);
+    }
 
     //辅助函数（通常不提供调用）
     //设置角色数据
@@ -101,6 +128,7 @@
     }
     //主动全排序
     function sortSpriteLayer(){
+        UPDATE_PD=true;
         const executableTargets=runtime.executableTargets;//获取运行时对象
         executableTargets.sort((a,b)=>sortCompare(a,b));//主排序
         const TargetDrawableIDList=executableTargets.map(it=>it.drawableID);//取图层ID
@@ -108,9 +136,11 @@
         const drawList=renderer._drawList;//渲染列表
         for(let i=0,j=0;i<drawList.length;++i)if(TargetDrawableIDset.has(drawList[i]))drawList[i]=TargetDrawableIDList[j++];//仅替换角色的图层ID，其他的不动
         renderer.dirty=true;//刷新
+        UPDATE_PD=false;
     }
     //对单个角色进行排序（前提是有序的）
     function tempSpriteLayerSort(target){
+        UPDATE_PD=true;
         if(!isLayerManagement.getCurrent())return;//未开启图层管理，不保证有序的，直接返回
         const executableTargets=runtime.executableTargets;//所有角色的图层target
         const drawableID=target.drawableID;//当前角色图层ID
@@ -123,8 +153,11 @@
         //二分优化
         let L,R,mid;
         if(isLeft){
-            L=0,R=idx-1;// [0,IDidx-1] 区间
-            //需要找到 等后，即位于 大 区间 最前的元素，不位于 小、等 区间
+            L=0,R=idx-1;// [ 0 , IDidx-1 ] 区间
+            //区间展开：
+            //  [ ...小 , ...等 , ...大 , 角色(当前) ]
+            //  [ [ 小前 , ... , 小后 ] , [ 等前 , ... , 等后 ] , [ 大前 , ... , 大后 ] , 角色(当前) ]
+            //为保证相对顺序，需要找到 等后，即位于 大 区间 最前的元素，不位于 小、等 区间
             while(L<R){
                 mid=L+((R-L)>>1);//明显，向下取整
                 if(pd(idx,mid)<0)R=mid;//说明mid处于大区间，右端点向左缩
@@ -132,8 +165,11 @@
             }
         }
         else if(isRight){
-            L=idx+1,R=executableTargets.length-1;// [IDidx+1,executableTargets.length-1] 区间
-            //需要找到 等前，即位于 小 区间 最后的元素，不位于 等、大 区间
+            L=idx+1,R=executableTargets.length-1;// [ IDidx+1 , executableTargets.length-1 ] 区间
+            //区间展开：
+            //  [ 角色(当前) , ...小 , ...等 , ...大 ]
+            //  [ 角色(当前) , [ 小前 , ... , 小后 ] , [ 等前 , ... , 等后 ] , [ 大前 , ... , 大后 ] ]
+            //为保证相对顺序，需要找到 等前，即位于 小 区间 最后的元素，不位于 等、大 区间
             while(L<R){
                 mid=L+((R-L-1)>>1)+1;//明显，向上取整
                 if(pd(mid,idx)<0)L=mid;//说明mid处于小区间，左端点向右缩
@@ -145,12 +181,13 @@
             target.goForwardLayers(ans-idx);//更加快速便捷的函数
             renderer.dirty=true;//刷新
         }
+        UPDATE_PD=false;
     }
     //用名字访问或者指向自己
     function getTarget(name,util){
         return name===_myself_?util.target:runtime.getSpriteTargetByName(name);
     }
-    //获取角色文件路径数组，是真实存在的路径，且可以是多级文件路径，尽管tw原生都不支持多级文件渲染，这里我们自己实现
+    //获取角色文件路径数组，是真实存在的路径，且可以是多级文件路径，尽管tw原生都不支持多级文件夹嵌套，这里我们自己实现
     //元素格式是： 文件名1//文件名2//文件名3//...
     //至少是：文件名//
     function getFolderPathList(){
@@ -237,7 +274,7 @@
                     },
                     {
                         blockType:Scratch.BlockType.LABEL,
-                        text:"私有处理"
+                        text:"局部处理"
                     },
                     {
                         opcode:"setSpriteHierarchy",
@@ -306,11 +343,12 @@
                         {text:"开启",value:"true"},
                         {text:"关闭",value:"false"}
                     ],
+                    spriteDatasList:["层级","排序值","图层序号"],
+                    targetTypeSelector:["角色和克隆体","角色","克隆体"],
                     hierarchysList:{
                         acceptReporters:true,
                         items:"returnHierarchysList"
                     },
-                    spriteDatasList:["层级","排序值","图层序号"],
                     spriteNameAndMyself:{
                         acceptReporters:true,
                         items:"returnSpriteNameAndMyself"
@@ -318,8 +356,7 @@
                     folderPathSelector:{
                         acceptReporters:true,
                         items:"returnFolderPathSelector"
-                    },
-                    targetTypeSelector:["角色和克隆体","角色","克隆体"]
+                    }
                 }
             };
         }
@@ -350,7 +387,7 @@
             const type=toString(args.type);
             const hierarchy=toString(args.hierarchy);
 
-            if(getTargetsInFolderPath(path===_all_?"":path).reduce((acc,target)=>{
+            if(getTargetsInFolderPath(path===_stage_?"":path).reduce((acc,target)=>{
                 if(type==="角色和克隆体")acc.push(target);
                 else if(type==="角色"&&!target.isOriginal)acc.push(target);
                 else if(type==="克隆体"&&target.isOriginal)acc.push(target);
@@ -415,7 +452,7 @@
             return getFolderPathList().reduce((acc,it)=>{
                 acc.push({text:it,value:it});
                 return acc;
-            },[{text:"所有角色",value:_all_}]);
+            },[{text:"所有角色",value:_stage_}]);
         }
         //debug
         debug(args,util){
